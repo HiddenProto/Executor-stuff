@@ -1,0 +1,149 @@
+-- Ultra God Mode v15 - 5 Staggered Layers + Instant 0 HP Rescue
+-- 5 layers started with tiny delays for precise frame sliding
+-- Extremely fast continuous loop + HealthChanged for when it hits exactly 0
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+
+local mainHeartbeat = nil
+local steppedConn = nil
+local renderConn = nil
+local healthChangedConn = nil
+local metaHook = nil
+
+local LAYERS = 5
+
+local function setupUltraGodMode(character)
+    if not character then return end
+    local humanoid = character:WaitForChild("Humanoid", 5)
+    if not humanoid then return end
+    
+    -- Reset
+    metaHook = nil
+    if mainHeartbeat then mainHeartbeat:Disconnect() end
+    if steppedConn then steppedConn:Disconnect() end
+    if renderConn then renderConn:Disconnect() end
+    if healthChangedConn then healthChangedConn:Disconnect() end
+    
+    -- Core setup
+    humanoid.MaxHealth = 1e9
+    humanoid.Health = 1e9
+    humanoid.BreakJointsOnDeath = false
+    humanoid.RequiresNeck = false
+    humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
+    
+    -- Metatable backup
+    local mt = getrawmetatable(humanoid)
+    if mt and not metaHook then
+        setreadonly(mt, false)
+        local oldNewIndex = mt.__newindex
+        mt.__newindex = function(self, key, value)
+            if key == "Health" and (value <= 0 or value < 1e9 - 2000) then
+                value = 1e9
+            elseif key == "MaxHealth" then
+                value = 1e9
+            end
+            return oldNewIndex(self, key, value)
+        end
+        setreadonly(mt, true)
+        metaHook = true
+    end
+    
+    -- Instant rescue when health hits 0 or low (this is the "when character gets 0 hp" layer)
+    healthChangedConn = humanoid.HealthChanged:Connect(function(newHealth)
+        if newHealth <= 0 or newHealth < 1e9 - 1000 then
+            humanoid.Health = 1e9
+            humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
+            humanoid:ChangeState(Enum.HumanoidStateType.Running)
+        end
+    end)
+    
+    -- Camera fix
+    local camera = workspace.CurrentCamera
+    renderConn = RunService.RenderStepped:Connect(function()
+        if humanoid and humanoid.Parent then
+            camera.CameraSubject = humanoid
+            camera.CameraType = Enum.CameraType.Custom
+        end
+    end)
+    
+    -- Main continuous ultra-fast loop (500 sets every frame)
+    mainHeartbeat = RunService.Heartbeat:Connect(function()
+        if not (humanoid and humanoid.Parent) then return end
+        
+        humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
+        
+        for i = 1, 500 do
+            humanoid.Health = 1e9
+        end
+        
+        local state = humanoid:GetState()
+        if state == Enum.HumanoidStateType.Dead or
+           state == Enum.HumanoidStateType.FallingDown or
+           state == Enum.HumanoidStateType.Physics or
+           state == Enum.HumanoidStateType.Ragdoll then
+            humanoid:ChangeState(Enum.HumanoidStateType.Running)
+        end
+        
+        if humanoid.PlatformStand then
+            humanoid.PlatformStand = false
+        end
+    end)
+    
+    -- Stepped extra layer
+    steppedConn = RunService.Stepped:Connect(function()
+        if humanoid and humanoid.Parent then
+            humanoid.Health = 1e9
+            humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
+        end
+    end)
+    
+    -- Start the 5 staggered layers with very small delays (this is the "turn each one on from first to last" part)
+    for layer = 1, LAYERS do
+        task.spawn(function()
+            task.wait((layer - 1) * 0.0008)  -- very small staggered delay (0.8ms steps) for precise sliding
+            print("Layer " .. layer .. " of " .. LAYERS .. " activated with stagger")
+            
+            -- Each layer runs its own fast sub-loop (parallel coverage)
+            while humanoid and humanoid.Parent do
+                for i = 1, 250 do
+                    humanoid.Health = 1e9
+                end
+                humanoid:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
+                task.wait(0.0005)  -- tiny internal delay per layer for max density
+            end
+        end)
+    end
+    
+    print("✅ Ultra God Mode v15 - 5 STAGGERED LAYERS + 0 HP INSTANT RESCUE ACTIVE on " .. character.Name)
+    print("   → Extremely fast continuous + staggered sliding + HealthChanged on 0/low HP")
+    print("   → Test heavy for-loop ;kill many times!")
+end
+
+-- Apply immediately
+if player.Character then
+    setupUltraGodMode(player.Character)
+end
+
+-- Re-apply on respawn
+player.CharacterAdded:Connect(function(newChar)
+    task.wait(0.15)
+    setupUltraGodMode(newChar)
+end)
+
+-- Cleanup
+player.CharacterRemoving:Connect(function()
+    if mainHeartbeat then mainHeartbeat:Disconnect() end
+    if steppedConn then steppedConn:Disconnect() end
+    if renderConn then renderConn:Disconnect() end
+    if healthChangedConn then healthChangedConn:Disconnect() end
+    mainHeartbeat = nil
+    steppedConn = nil
+    renderConn = nil
+    healthChangedConn = nil
+    metaHook = nil
+end)
+
+print("Ultra God Mode v15 loaded with 5 staggered layers!")
