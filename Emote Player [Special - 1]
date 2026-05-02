@@ -1,0 +1,2048 @@
+local cloneref = (type(cloneref) == "function") and cloneref or function(...) return ... end
+local Services = setmetatable({}, {
+    __index = function(_, n) return cloneref(game:GetService(n)) end
+})
+local Players        = Services.Players
+local RunService     = Services.RunService
+local UserInputService = Services.UserInputService
+local TweenService   = Services.TweenService
+
+local player    = Players.LocalPlayer
+local mouse     = player:GetMouse()
+local character = player.Character or player.CharacterAdded:Wait()
+local humanoid  = character:WaitForChild("Humanoid")
+local hrp       = character:WaitForChild("HumanoidRootPart")
+
+player.CharacterAdded:Connect(function(c)
+    character = c
+    humanoid  = c:WaitForChild("Humanoid")
+    hrp       = c:WaitForChild("HumanoidRootPart")
+end)
+
+local Settings = {
+    Weight          = 1,
+    Priority        = Enum.AnimationPriority.Action4,
+    FadeIn          = 0.1,
+    FadeOut         = 0.1,
+    WobbleEnabled   = false,
+    WobblePoint     = 0.3,
+    WobbleDuration  = 1.5,
+    WobbleSpeed     = 8,
+    WobbleRange     = 0.05,
+}
+
+local EMOTES = {
+    { name = "Head Pats",       id = 123663633846435 },
+    { name = "Party At Beach",  id = 87873758518678  },
+    { name = "Thinking Pose",   id = 137131987273868 },
+    { name = "Die Lit",         id = 136258438423661 },
+    { name = "Russian Dance",   id = 74608751145756  },
+    { name = "Jumpstyle Dance", id = 133248139921782 },
+    { name = "Nightmail Jig",   id = 136328385086605 },
+    { name = "Be Competent",    id = 124041369408613 },
+    { name = "Body Phone",      id = 95714033584938  },
+    { name = "Tail Wag",        id = 71980669913244  },
+    { name = "Retro Sit",       id = 111158557252616 },
+    { name = "Urban Dance",     id = 89466407313325  },
+}
+
+local TOOL_IDS = {
+    instantTransmission = 75350513830975,
+    bhop                = 77394499746500,
+}
+
+local animLengths = {}
+
+ -- populated during preload: [id] = length in seconds
+
+local resolveCache = {}
+local function resolveAnimId(id)
+    local key = tostring(id)
+    if resolveCache[key] then return resolveCache[key] end
+    local ok, result = pcall(function()
+        return game:GetObjects("rbxassetid://" .. key)
+    end)
+    if ok and result then
+        for _, obj in result do
+            if obj:IsA("Animation") then
+                resolveCache[key] = obj.AnimationId
+                return obj.AnimationId
+            end
+            for _, desc in obj:GetDescendants() do
+                if desc:IsA("Animation") then
+                    resolveCache[key] = desc.AnimationId
+                    return desc.AnimationId
+                end
+            end
+        end
+    end
+    local fallback = "rbxassetid://" .. key
+    resolveCache[key] = fallback
+    return fallback
+end
+
+local function newAnim(animId)
+    local a = Instance.new("Animation")
+    a.AnimationId = animId
+    return a
+end
+
+local function lerp(a, b, t) return a + (b - a) * t end
+
+local limpTrack    = nil
+local limpEnabled  = false
+local LIMP_ANIM_ID = 92198004084765
+
+local function startLimp()
+    if limpTrack and limpTrack.IsPlaying then return end
+    local animId = resolveAnimId(LIMP_ANIM_ID)
+    local animator = humanoid:FindFirstChildOfClass("Animator")
+    if not animator then return end
+    limpTrack = animator:LoadAnimation(newAnim(animId))
+    limpTrack.Priority = Enum.AnimationPriority.Movement
+    limpTrack.Looped   = true
+    limpTrack:Play(0.3, 0.65, 1)
+end
+
+local function stopLimp()
+    if limpTrack then
+        limpTrack:Stop(0.4)
+        limpTrack = nil
+    end
+end
+
+player.CharacterAdded:Connect(function(c)
+    limpTrack = nil
+    humanoid = c:WaitForChild("Humanoid")
+    hrp      = c:WaitForChild("HumanoidRootPart")
+    if limpEnabled then
+        task.wait(0.5)
+        startLimp()
+    end
+end)
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name            = "AnimPlayerGui"
+screenGui.ResetOnSpawn    = false
+screenGui.ZIndexBehavior  = Enum.ZIndexBehavior.Sibling
+screenGui.Parent          = Services.CoreGui
+
+local loadFrame = Instance.new("Frame")
+loadFrame.Size            = UDim2.new(0, 320, 0, 130)
+loadFrame.Position        = UDim2.new(0.5, -160, 0.5, -65)
+loadFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+loadFrame.BorderSizePixel = 0
+loadFrame.ZIndex          = 50
+loadFrame.Parent          = screenGui
+Instance.new("UICorner", loadFrame).CornerRadius = UDim.new(0, 14)
+
+local loadStroke = Instance.new("UIStroke", loadFrame)
+loadStroke.Color     = Color3.fromRGB(0, 170, 255)
+loadStroke.Thickness = 1.5
+
+local loadTitle = Instance.new("TextLabel")
+loadTitle.Size               = UDim2.new(1, 0, 0, 38)
+loadTitle.BackgroundTransparency = 1
+loadTitle.Text               = "✦  Loading Animations"
+loadTitle.Font               = Enum.Font.GothamBold
+loadTitle.TextSize           = 16
+loadTitle.TextColor3         = Color3.new(1, 1, 1)
+loadTitle.ZIndex             = 51
+loadTitle.Parent             = loadFrame
+
+local loadStatus = Instance.new("TextLabel")
+loadStatus.Size              = UDim2.new(1, -24, 0, 22)
+loadStatus.Position          = UDim2.new(0, 12, 0, 38)
+loadStatus.BackgroundTransparency = 1
+loadStatus.Text              = "Preparing..."
+loadStatus.Font              = Enum.Font.Gotham
+loadStatus.TextSize          = 13
+loadStatus.TextColor3        = Color3.fromRGB(170, 170, 170)
+loadStatus.TextXAlignment    = Enum.TextXAlignment.Left
+loadStatus.ZIndex            = 51
+loadStatus.Parent            = loadFrame
+
+local barBg = Instance.new("Frame")
+barBg.Size            = UDim2.new(1, -24, 0, 10)
+barBg.Position        = UDim2.new(0, 12, 0, 68)
+barBg.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+barBg.ZIndex          = 51
+barBg.Parent          = loadFrame
+Instance.new("UICorner", barBg).CornerRadius = UDim.new(1, 0)
+
+local barFill = Instance.new("Frame")
+barFill.Size            = UDim2.new(0, 0, 1, 0)
+barFill.BackgroundColor3 = Color3.fromRGB(0, 170, 255)
+barFill.ZIndex          = 52
+barFill.Parent          = barBg
+Instance.new("UICorner", barFill).CornerRadius = UDim.new(1, 0)
+
+local loadSub = Instance.new("TextLabel")
+loadSub.Size               = UDim2.new(1, 0, 0, 26)
+loadSub.Position           = UDim2.new(0, 0, 0, 92)
+loadSub.BackgroundTransparency = 1
+loadSub.Text               = "This only runs once per session"
+loadSub.Font               = Enum.Font.Gotham
+loadSub.TextSize           = 11
+loadSub.TextColor3         = Color3.fromRGB(100, 100, 100)
+loadSub.ZIndex             = 51
+loadSub.Parent             = loadFrame
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size            = UDim2.new(0, 370, 0, 430)
+mainFrame.Position        = UDim2.new(0.28, 0, 0.18, 0)
+mainFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+mainFrame.Active          = true
+mainFrame.Draggable       = true
+mainFrame.Visible         = false
+mainFrame.Parent          = screenGui
+Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 14)
+
+local mainStroke = Instance.new("UIStroke", mainFrame)
+mainStroke.Color     = Color3.fromRGB(40, 40, 40)
+mainStroke.Thickness = 1.5
+
+local titleBar = Instance.new("Frame")
+titleBar.Size            = UDim2.new(1, 0, 0, 40)
+titleBar.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
+titleBar.Parent          = mainFrame
+Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0, 14)
+
+local titleBarBottom = Instance.new("Frame")
+titleBarBottom.Size            = UDim2.new(1, 0, 0, 14)
+titleBarBottom.Position        = UDim2.new(0, 0, 1, -14)
+titleBarBottom.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
+titleBarBottom.BorderSizePixel = 0
+titleBarBottom.Parent          = titleBar
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size               = UDim2.new(1, -80, 1, 0)
+titleLabel.Position           = UDim2.new(0, 14, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text               = "✦  Anim Player"
+titleLabel.Font               = Enum.Font.GothamBold
+titleLabel.TextSize           = 15
+titleLabel.TextColor3         = Color3.new(1, 1, 1)
+titleLabel.TextXAlignment     = Enum.TextXAlignment.Left
+titleLabel.Parent             = titleBar
+
+local minBtn = Instance.new("TextButton")
+minBtn.Size            = UDim2.new(0, 28, 0, 24)
+minBtn.Position        = UDim2.new(1, -36, 0.5, -12)
+minBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+minBtn.Text            = "−"
+minBtn.TextColor3      = Color3.new(1, 1, 1)
+minBtn.Font            = Enum.Font.GothamBold
+minBtn.TextSize        = 18
+minBtn.Parent          = titleBar
+Instance.new("UICorner", minBtn).CornerRadius = UDim.new(0, 6)
+
+local minimizeFrame
+minBtn.MouseButton1Click:Connect(function()
+    mainFrame.Visible = false
+    if not minimizeFrame then
+        minimizeFrame = Instance.new("Frame")
+        minimizeFrame.Size            = UDim2.new(0, 48, 0, 48)
+        minimizeFrame.Position        = UDim2.new(0, 12, 0.5, -24)
+        minimizeFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+        minimizeFrame.Active          = true
+        minimizeFrame.Parent          = screenGui
+        Instance.new("UICorner", minimizeFrame).CornerRadius = UDim.new(0, 12)
+        Instance.new("UIStroke", minimizeFrame).Color = Color3.fromRGB(0, 170, 255)
+
+        local restBtn = Instance.new("TextButton")
+        restBtn.Size              = UDim2.new(1, 0, 1, 0)
+        restBtn.BackgroundTransparency = 1
+        restBtn.Text              = "✦"
+        restBtn.TextColor3        = Color3.fromRGB(0, 170, 255)
+        restBtn.Font              = Enum.Font.GothamBold
+        restBtn.TextSize          = 22
+        restBtn.Parent            = minimizeFrame
+        restBtn.MouseButton1Click:Connect(function()
+            mainFrame.Visible    = true
+            minimizeFrame.Visible = false
+        end)
+    end
+    minimizeFrame.Visible = true
+end)
+
+local TAB_NAMES = { "Emotes", "Tools", "Settings" }
+local tabButtons = {}
+local tabPages   = {}
+
+local tabBar = Instance.new("Frame")
+tabBar.Size            = UDim2.new(1, -20, 0, 34)
+tabBar.Position        = UDim2.new(0, 10, 0, 46)
+tabBar.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+tabBar.Parent          = mainFrame
+Instance.new("UICorner", tabBar).CornerRadius = UDim.new(0, 10)
+
+local tabLayout = Instance.new("UIListLayout", tabBar)
+tabLayout.FillDirection = Enum.FillDirection.Horizontal
+tabLayout.SortOrder     = Enum.SortOrder.LayoutOrder
+tabLayout.Padding       = UDim.new(0, 4)
+
+local tabPad = Instance.new("UIPadding", tabBar)
+tabPad.PaddingLeft   = UDim.new(0, 4)
+tabPad.PaddingRight  = UDim.new(0, 4)
+tabPad.PaddingTop    = UDim.new(0, 4)
+tabPad.PaddingBottom = UDim.new(0, 4)
+
+for i, name in ipairs(TAB_NAMES) do
+    local btn = Instance.new("TextButton")
+    btn.Size            = UDim2.new(1/#TAB_NAMES, -4, 1, 0)
+    btn.BackgroundColor3 = Color3.fromRGB(38, 38, 38)
+    btn.Text            = name
+    btn.TextColor3      = Color3.fromRGB(160, 160, 160)
+    btn.Font            = Enum.Font.GothamBold
+    btn.TextSize        = 13
+    btn.LayoutOrder     = i
+    btn.Parent          = tabBar
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 7)
+    tabButtons[name] = btn
+
+    local page = Instance.new("ScrollingFrame")
+    page.Size             = UDim2.new(1, -20, 1, -92)
+    page.Position         = UDim2.new(0, 10, 0, 88)
+    page.BackgroundTransparency = 1
+    page.ScrollBarThickness = 4
+    page.ScrollBarImageColor3 = Color3.fromRGB(0, 140, 220)
+    page.CanvasSize       = UDim2.new(0, 0, 0, 0)
+    page.Visible          = false
+    page.Parent           = mainFrame
+
+    local layout = Instance.new("UIListLayout", page)
+    layout.Padding        = UDim.new(0, 6)
+    layout.FillDirection  = Enum.FillDirection.Vertical
+    layout.SortOrder      = Enum.SortOrder.LayoutOrder
+    layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        page.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 10)
+    end)
+
+    page:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
+        page.CanvasPosition = Vector2.new(0, page.CanvasPosition.Y)
+    end)
+
+    tabPages[name] = page
+end
+
+local activeTab = nil
+local function switchTab(name)
+    activeTab = name
+    for tName, page in pairs(tabPages) do
+        page.Visible = tName == name
+    end
+    for tName, btn in pairs(tabButtons) do
+        if tName == name then
+            btn.BackgroundColor3 = Color3.fromRGB(0, 145, 255)
+            btn.TextColor3       = Color3.new(1, 1, 1)
+        else
+            btn.BackgroundColor3 = Color3.fromRGB(38, 38, 38)
+            btn.TextColor3       = Color3.fromRGB(160, 160, 160)
+        end
+    end
+end
+for _, name in ipairs(TAB_NAMES) do
+    tabButtons[name].MouseButton1Click:Connect(function() switchTab(name) end)
+end
+switchTab("Emotes")
+
+task.defer(function()
+    for _, obj in screenGui:GetDescendants() do
+        if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
+            obj.RichText = true
+        end
+    end
+    screenGui.DescendantAdded:Connect(function(obj)
+        if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
+            obj.RichText = true
+        end
+    end)
+end)
+
+local function makeDivider(parent, order)
+    local d = Instance.new("Frame")
+    d.Size            = UDim2.new(1, 0, 0, 1)
+    d.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    d.BorderSizePixel = 0
+    d.LayoutOrder     = order
+    d.Parent          = parent
+end
+
+local function makeSectionLabel(text, parent, order)
+    local l = Instance.new("TextLabel")
+    l.Size               = UDim2.new(1, 0, 0, 22)
+    l.BackgroundTransparency = 1
+    l.Text               = text
+    l.Font               = Enum.Font.GothamBold
+    l.TextSize           = 12
+    l.TextColor3         = Color3.fromRGB(120, 120, 120)
+    l.TextXAlignment     = Enum.TextXAlignment.Left
+    l.LayoutOrder        = order
+    l.Parent             = parent
+    return l
+end
+
+local function makeButton(text, color, parent, order)
+    local btn = Instance.new("TextButton")
+    btn.Size            = UDim2.new(1, 0, 0, 36)
+    btn.BackgroundColor3 = color or Color3.fromRGB(38, 38, 38)
+    btn.Text            = text
+    btn.TextColor3      = Color3.new(1, 1, 1)
+    btn.Font            = Enum.Font.GothamBold
+    btn.TextSize        = 13
+    btn.LayoutOrder     = order
+    btn.Parent          = parent
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 9)
+    return btn
+end
+
+local function makeSlider(parent, name, minVal, maxVal, default, order, onChange)
+    local container = Instance.new("Frame")
+    container.Size            = UDim2.new(1, 0, 0, 72)
+    container.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+    container.LayoutOrder     = order
+    container.Parent          = parent
+    Instance.new("UICorner", container).CornerRadius = UDim.new(0, 10)
+
+    local lbl = Instance.new("TextLabel")
+    lbl.Size               = UDim2.new(0.6, -10, 0, 22)
+    lbl.Position           = UDim2.new(0, 12, 0, 8)
+    lbl.BackgroundTransparency = 1
+    lbl.Text               = string.format("%s: %.2f", name, default)
+    lbl.TextColor3         = Color3.new(1, 1, 1)
+    lbl.Font               = Enum.Font.Gotham
+    lbl.TextSize           = 13
+    lbl.TextXAlignment     = Enum.TextXAlignment.Left
+    lbl.Parent             = container
+
+    local tb = Instance.new("TextBox")
+    tb.Size            = UDim2.new(0.35, -12, 0, 22)
+    tb.Position        = UDim2.new(0.65, 0, 0, 8)
+    tb.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+    tb.Text            = tostring(default)
+    tb.TextColor3      = Color3.new(1, 1, 1)
+    tb.Font            = Enum.Font.Gotham
+    tb.TextSize        = 13
+    tb.ClearTextOnFocus = false
+    tb.Parent          = container
+    Instance.new("UICorner", tb).CornerRadius = UDim.new(0, 6)
+
+    local track = Instance.new("Frame")
+    track.Size            = UDim2.new(1, -24, 0, 10)
+    track.Position        = UDim2.new(0, 12, 0, 44)
+    track.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+    track.Active          = true
+    track.Parent          = container
+    Instance.new("UICorner", track).CornerRadius = UDim.new(1, 0)
+
+    local fill = Instance.new("Frame")
+    fill.BackgroundColor3 = Color3.fromRGB(0, 170, 255)
+    fill.Size             = UDim2.new(0, 0, 1, 0)
+    fill.Parent           = track
+    Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+
+    local thumb = Instance.new("Frame")
+    thumb.Size        = UDim2.new(0, 18, 0, 18)
+    thumb.AnchorPoint = Vector2.new(0.5, 0.5)
+    thumb.Position    = UDim2.new(0, 0, 0.5, 0)
+    thumb.BackgroundColor3 = Color3.fromRGB(220, 220, 220)
+    thumb.Active      = true
+    thumb.Parent      = track
+    Instance.new("UICorner", thumb).CornerRadius = UDim.new(1, 0)
+
+    local currentVal = default
+    local dragging   = false
+
+    local function apply(v)
+        currentVal = math.clamp(math.floor(v * 100) / 100, minVal, maxVal)
+        lbl.Text   = string.format("%s: %.2f", name, currentVal)
+        tb.Text    = string.format("%.2f", currentVal)
+        local rel  = (currentVal - minVal) / (maxVal - minVal)
+        fill.Size  = UDim2.new(rel, 0, 1, 0)
+        thumb.Position = UDim2.new(rel, 0, 0.5, 0)
+        if onChange then onChange(currentVal) end
+    end
+
+    local function fromMouse(inp)
+        local rel = math.clamp(
+            (inp.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+        apply(minVal + (maxVal - minVal) * rel)
+    end
+
+    track.InputBegan:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true; fromMouse(inp)
+        end
+    end)
+    thumb.InputBegan:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(inp)
+        if dragging and inp.UserInputType == Enum.UserInputType.MouseMovement then
+            fromMouse(inp)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(inp)
+        if inp.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+    end)
+    tb.FocusLost:Connect(function(enter)
+        if enter then
+            local n = tonumber(tb.Text)
+            if n then apply(n) else tb.Text = string.format("%.2f", currentVal) end
+        end
+    end)
+
+    apply(default)
+    return apply
+end
+
+local emotePage     = tabPages["Emotes"]
+local currentEmote  = nil
+local activeEmoteBtn = nil
+
+local function stopEmote()
+    if currentEmote then
+        currentEmote:Stop(Settings.FadeOut)
+        currentEmote = nil
+    end
+    if activeEmoteBtn then
+        activeEmoteBtn.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+        activeEmoteBtn = nil
+    end
+end
+
+local function playEmote(id, btn)
+    stopEmote()
+    local animId = resolveAnimId(id)
+    local track  = humanoid:LoadAnimation(newAnim(animId))
+    track.Priority = Settings.Priority
+    track.Looped   = true
+    track:Play(Settings.FadeIn, Settings.Weight, 1)
+    currentEmote   = track
+    activeEmoteBtn = btn
+    if btn then btn.BackgroundColor3 = Color3.fromRGB(0, 130, 215) end
+
+    if Settings.WobbleEnabled then
+        task.delay(0.08, function()
+            if currentEmote ~= track then return end
+            local len = track.Length
+            if len <= 0 then len = animLengths[id] or 0 end
+            if len <= 0 then return end
+
+            track:AdjustSpeed(0)
+            local startCenter = 0.15 * len
+            local range       = math.clamp(Settings.WobbleRange, 0, 0.5) * len
+            local elapsed     = 0
+            local phase       = 0
+            local wobConn
+            wobConn = RunService.Heartbeat:Connect(function(dt)
+                if currentEmote ~= track then
+                    wobConn:Disconnect()
+                    return
+                end
+                elapsed = elapsed + dt
+                if elapsed >= Settings.WobbleDuration then
+                    wobConn:Disconnect()
+                    track.TimePosition = 0
+                    track:AdjustSpeed(1)
+                    return
+                end
+                local progress  = elapsed / Settings.WobbleDuration
+                local decay     = (1 - progress)
+                local centerPos = startCenter * (1 - progress)
+                phase = phase + Settings.WobbleSpeed * decay * dt * math.pi * 2
+                local offset = math.sin(phase) * range * decay
+                track.TimePosition = math.clamp(centerPos + offset, 0, len)
+            end)
+        end)
+    end
+end
+
+local stopEmoteBtn = makeButton("■  Stop Emote", Color3.fromRGB(190, 50, 50), emotePage, 0)
+stopEmoteBtn.MouseButton1Click:Connect(stopEmote)
+
+makeSectionLabel("EMOTES", emotePage, 1)
+
+for i, emote in ipairs(EMOTES) do
+    local btn = Instance.new("TextButton")
+    btn.Size            = UDim2.new(1, 0, 0, 36)
+    btn.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+    btn.Text            = emote.name
+    btn.TextColor3      = Color3.new(1, 1, 1)
+    btn.Font            = Enum.Font.Gotham
+    btn.TextSize        = 13
+    btn.LayoutOrder     = i + 1
+    btn.Parent          = emotePage
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 9)
+
+    local lenLabel = Instance.new("TextLabel")
+    lenLabel.Size               = UDim2.new(0, 50, 1, 0)
+    lenLabel.Position           = UDim2.new(1, -58, 0, 0)
+    lenLabel.BackgroundTransparency = 1
+    lenLabel.Text               = ""
+    lenLabel.Font               = Enum.Font.Gotham
+    lenLabel.TextSize           = 11
+    lenLabel.TextColor3         = Color3.fromRGB(100, 100, 100)
+    lenLabel.Parent             = btn
+
+    emote._btn      = btn
+    emote._lenLabel = lenLabel
+
+    btn.MouseButton1Click:Connect(function()
+        playEmote(emote.id, btn)
+    end)
+end
+
+player.CharacterAdded:Connect(function()
+    currentEmote   = nil
+    activeEmoteBtn = nil
+end)
+
+local toolPage = tabPages["Tools"]
+
+local function makeToolCard(toolName, desc, order)
+    local card = Instance.new("Frame")
+    card.Size            = UDim2.new(1, 0, 0, 70)
+    card.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+    card.LayoutOrder     = order
+    card.Parent          = toolPage
+    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 10)
+    Instance.new("UIStroke", card).Color = Color3.fromRGB(42, 42, 42)
+
+    local icon = Instance.new("TextLabel")
+    icon.Size               = UDim2.new(0, 40, 0, 40)
+    icon.Position           = UDim2.new(0, 10, 0.5, -20)
+    icon.BackgroundColor3   = Color3.fromRGB(0, 130, 215)
+    icon.Text               = ""
+    icon.Font               = Enum.Font.GothamBold
+    icon.TextSize           = 20
+    icon.TextColor3         = Color3.new(1, 1, 1)
+    icon.Parent             = card
+    Instance.new("UICorner", icon).CornerRadius = UDim.new(0, 9)
+
+    local nameLbl = Instance.new("TextLabel")
+    nameLbl.Size               = UDim2.new(1, -130, 0, 26)
+    nameLbl.Position           = UDim2.new(0, 60, 0, 10)
+    nameLbl.BackgroundTransparency = 1
+    nameLbl.Text               = toolName
+    nameLbl.Font               = Enum.Font.GothamBold
+    nameLbl.TextSize           = 13
+    nameLbl.TextColor3         = Color3.new(1, 1, 1)
+    nameLbl.TextXAlignment     = Enum.TextXAlignment.Left
+    nameLbl.Parent             = card
+
+    local descLbl = Instance.new("TextLabel")
+    descLbl.Size               = UDim2.new(1, -130, 0, 28)
+    descLbl.Position           = UDim2.new(0, 60, 0, 34)
+    descLbl.BackgroundTransparency = 1
+    descLbl.Text               = desc
+    descLbl.Font               = Enum.Font.Gotham
+    descLbl.TextSize           = 11
+    descLbl.TextColor3         = Color3.fromRGB(130, 130, 130)
+    descLbl.TextXAlignment     = Enum.TextXAlignment.Left
+    descLbl.TextWrapped        = true
+    descLbl.Parent             = card
+
+    local giveBtn = Instance.new("TextButton")
+    giveBtn.Size            = UDim2.new(0, 82, 0, 30)
+    giveBtn.Position        = UDim2.new(1, -92, 0.5, -15)
+    giveBtn.BackgroundColor3 = Color3.fromRGB(0, 145, 255)
+    giveBtn.Text            = "Give Tool"
+    giveBtn.TextColor3      = Color3.new(1, 1, 1)
+    giveBtn.Font            = Enum.Font.GothamBold
+    giveBtn.TextSize        = 12
+    giveBtn.Parent          = card
+    Instance.new("UICorner", giveBtn).CornerRadius = UDim.new(0, 8)
+
+    return giveBtn, icon
+end
+
+local itGiveBtn, itIcon = makeToolCard(
+    "Instant Transmission",
+    "Equip → Click to lock target → animates → teleports on finish. Unequip to cancel.",
+    1
+)
+itIcon.Text = "⚡"
+
+local itTool     = nil
+local itTrack    = nil
+local itAnimating = false
+
+local function destroyITTool()
+    if itTool and itTool.Parent then itTool:Destroy() end
+    itTool = nil
+end
+
+local function createITTool()
+    destroyITTool()
+    local tool = Instance.new("Tool")
+    tool.Name           = "Instant Transmission"
+    tool.RequiresHandle = false
+    tool.CanBeDropped   = false
+    tool.Parent         = player.Backpack
+    itTool              = tool
+
+    local lockedTarget = nil
+
+    local function cancelIT()
+        itAnimating = false
+        lockedTarget = nil
+        if itTrack then
+            itTrack:Stop(0.15)
+            itTrack = nil
+        end
+    end
+
+    tool.Equipped:Connect(function()
+        itAnimating = false
+        lockedTarget = nil
+    end)
+
+    tool.Unequipped:Connect(function()
+        cancelIT()
+    end)
+
+    tool.Activated:Connect(function()
+        if itAnimating then return end -- locked once playing
+
+        lockedTarget = mouse.Hit.Position
+        itAnimating  = true
+
+        local animId = resolveAnimId(TOOL_IDS.instantTransmission)
+        local track  = humanoid:LoadAnimation(newAnim(animId))
+        track.Priority = Enum.AnimationPriority.Action4
+        track.Looped   = false
+        track:Play(0.1, 1, 1)
+        itTrack = track
+
+        local itLen = animLengths[TOOL_IDS.instantTransmission] or track.Length
+        local earlyTime = math.max(itLen - 0.5, 0)
+        task.delay(earlyTime, function()
+            if itAnimating and lockedTarget then
+                hrp.CFrame = CFrame.new(lockedTarget + Vector3.new(0, 3.5, 0))
+                track:Stop(0.15)
+                cancelIT()
+
+                local arrivalAnimId = resolveAnimId(109863797124787)
+                local arrivalTrack = humanoid:LoadAnimation(newAnim(arrivalAnimId))
+                arrivalTrack.Priority = Enum.AnimationPriority.Action4
+                arrivalTrack.Looped   = false
+                arrivalTrack:Play(0.05, 1, -0.5)
+
+                task.delay(0.1, function()
+                    local arrivalLen = animLengths[109863797124787]
+                    if not arrivalLen or arrivalLen <= 0 then
+                        arrivalLen = arrivalTrack.Length
+                    end
+                    if arrivalTrack and arrivalTrack.IsPlaying then
+                        arrivalTrack.TimePosition = math.min(1.0, arrivalLen - 0.05)
+                    end
+                end)
+            end
+        end)
+        track.Stopped:Connect(function()
+            cancelIT()
+        end)
+    end)
+end
+
+itGiveBtn.MouseButton1Click:Connect(function()
+    createITTool()
+    itGiveBtn.Text = "✓ Given"
+    itGiveBtn.BackgroundColor3 = Color3.fromRGB(30, 160, 80)
+    task.delay(2.5, function()
+        itGiveBtn.Text = "Give Tool"
+        itGiveBtn.BackgroundColor3 = Color3.fromRGB(0, 145, 255)
+    end)
+end)
+
+local bhopGiveBtn, bhopIcon = makeToolCard(
+    "BHop",
+    "Equip → move to build speed. Ground cap: 20 st/s, air cap: 50. Landing above 20 decels to 20. Multi-jump.",
+    2
+)
+bhopIcon.Text = "🏃"
+
+local bhopTool  = nil
+local bhopTrack = nil
+local bhopConns = {}
+local bhopActive = false
+
+local BHOP_MAX_SPEED  = 50
+local BHOP_GROUND_CAP = 20
+local BHOP_ACCEL      = 10
+local BHOP_DECEL      = 18
+local BHOP_JUMP_ADD   = 9
+
+local function clearBhopConns()
+    for _, c in ipairs(bhopConns) do pcall(function() c:Disconnect() end) end
+    bhopConns = {}
+end
+
+local function destroyBhopTool()
+    if bhopTool and bhopTool.Parent then bhopTool:Destroy() end
+    bhopTool = nil
+end
+
+local function createBhopTool()
+    destroyBhopTool()
+    clearBhopConns()
+
+    local tool = Instance.new("Tool")
+    tool.Name           = "BHop"
+    tool.RequiresHandle = false
+    tool.CanBeDropped   = false
+    tool.Parent         = player.Backpack
+    bhopTool            = tool
+
+    local savedJump  = nil
+    local savedSpeed = nil
+    local bhopSpeed  = 0
+    local jumpPart   = nil
+
+    local function removeJumpPart()
+        if jumpPart and jumpPart.Parent then
+            jumpPart:Destroy()
+        end
+        jumpPart = nil
+    end
+
+    local function spawnJumpPart()
+        removeJumpPart()
+        local p = Instance.new("Part")
+        p.Name        = "_BhopJumpPad"
+        p.Size        = Vector3.new(6, 0.4, 6)
+        p.Anchored    = true
+        p.CanCollide  = true
+        p.Transparency = 0.85
+        p.Material    = Enum.Material.SmoothPlastic
+        p.BrickColor  = BrickColor.new("Bright blue")
+        local feetY = hrp.Position.Y - (humanoid.HipHeight + hrp.Size.Y / 2)
+        p.CFrame = CFrame.new(hrp.Position.X, feetY - 0.2, hrp.Position.Z)
+        p.Parent  = workspace
+        jumpPart  = p
+
+        task.delay(0.5, removeJumpPart)
+    end
+
+    tool.Equipped:Connect(function()
+        bhopActive = true
+        bhopSpeed  = 0
+
+        savedJump  = humanoid.JumpPower
+        savedSpeed = humanoid.WalkSpeed
+
+        humanoid.JumpPower = savedJump + BHOP_JUMP_ADD
+
+        local animId = resolveAnimId(TOOL_IDS.bhop)
+        local track  = humanoid:LoadAnimation(newAnim(animId))
+        track.Priority = Settings.Priority
+        track.Looped   = true
+        track:Play(0.1, 1, 1)
+        bhopTrack = track
+
+        local moveConn = RunService.Heartbeat:Connect(function(dt)
+            if not bhopActive then return end
+            local md         = humanoid.MoveDirection
+            local isMoving   = md.Magnitude > 0.1
+            local isGrounded = humanoid.FloorMaterial ~= Enum.Material.Air
+
+            local onOwnPad = false
+            if isGrounded and jumpPart and jumpPart.Parent then
+                local touching = hrp:GetTouchingParts()
+                for _, p in touching do
+                    if p == jumpPart then onOwnPad = true break end
+                end
+            end
+
+            if onOwnPad then
+            elseif isGrounded then
+                if isMoving then
+                    if bhopSpeed < BHOP_GROUND_CAP then
+                        bhopSpeed = math.min(bhopSpeed + BHOP_ACCEL * dt, BHOP_GROUND_CAP)
+                    else
+                        bhopSpeed = math.max(bhopSpeed - BHOP_DECEL * dt, BHOP_GROUND_CAP)
+                    end
+                else
+                    bhopSpeed = math.max(bhopSpeed - BHOP_DECEL * dt, 0)
+                end
+            else
+                if isMoving then
+                    bhopSpeed = math.min(bhopSpeed + BHOP_ACCEL * dt, BHOP_MAX_SPEED)
+                end
+            end
+
+            humanoid.WalkSpeed = bhopSpeed
+            if bhopTrack and bhopTrack.IsPlaying then
+                bhopTrack:AdjustSpeed(1)
+            end
+        end)
+        table.insert(bhopConns, moveConn)
+
+        local jumpConn = UserInputService.JumpRequest:Connect(function()
+            if not bhopActive then return end
+            local state = humanoid:GetState()
+            if state == Enum.HumanoidStateType.Freefall
+            or state == Enum.HumanoidStateType.Jumping then
+                spawnJumpPart()
+                task.delay(0.06, function()
+                    if bhopActive then
+                        humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                    end
+                    removeJumpPart()
+                end)
+            end
+        end)
+        table.insert(bhopConns, jumpConn)
+
+        local landConn = humanoid.StateChanged:Connect(function(old, new)
+            if not bhopActive then return end
+            if (old == Enum.HumanoidStateType.Freefall or old == Enum.HumanoidStateType.Jumping)
+            and new == Enum.HumanoidStateType.Landed then
+                local fallSpeed = math.abs(hrp.Velocity.Y)
+                local cushionStrength = math.clamp(fallSpeed * 0.55, 4, 48)
+                local cushionDuration = math.clamp(fallSpeed * 0.012, 0.18, 0.55)
+
+                humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+
+                local bv = Instance.new("BodyVelocity")
+                bv.Velocity        = Vector3.new(0, cushionStrength, 0)
+                bv.MaxForce        = Vector3.new(0, math.huge, 0)
+                bv.P               = 5e4
+                bv.Parent          = hrp
+
+                local elapsed = 0
+                local fadeConn
+                fadeConn = RunService.Heartbeat:Connect(function(dt)
+                    elapsed = elapsed + dt
+                    local t = math.clamp(elapsed / cushionDuration, 0, 1)
+                    bv.Velocity = Vector3.new(0, cushionStrength * (1 - t), 0)
+                    if t >= 1 then
+                        fadeConn:Disconnect()
+                        bv:Destroy()
+                    end
+                end)
+            end
+        end)
+        table.insert(bhopConns, landConn)
+
+        local lastVY = 0
+        local SUDDEN_THRESHOLD = -8
+        local preSimConn = RunService.PreSimulation:Connect(function(dt)
+            if not bhopActive then return end
+            local vel   = hrp.AssemblyLinearVelocity
+            local vy    = vel.Y
+            local delta = vy - lastVY
+            if math.abs(delta) > 8 then
+                local smoothed = lastVY + delta * 0.5
+                hrp.AssemblyLinearVelocity = Vector3.new(vel.X, smoothed, vel.Z)
+                lastVY = smoothed
+            else
+                lastVY = vy
+            end
+        end)
+        table.insert(bhopConns, preSimConn)
+
+        local bhopRespawnConn = player.CharacterAdded:Connect(function(c)
+            bhopActive = false
+            clearBhopConns()
+            removeJumpPart()
+            if bhopTrack then bhopTrack:Stop(0) bhopTrack = nil end
+            if savedJump  then humanoid.JumpPower = savedJump  savedJump  = nil end
+            if savedSpeed then humanoid.WalkSpeed = savedSpeed savedSpeed = nil end
+            bhopSpeed = 0
+        end)
+        table.insert(bhopConns, bhopRespawnConn)
+
+    end)
+
+    tool.Unequipped:Connect(function()
+        bhopActive = false
+        clearBhopConns()
+        removeJumpPart()
+
+        if bhopTrack then
+            bhopTrack:Stop(0.15)
+            bhopTrack = nil
+        end
+
+        if savedJump  then humanoid.JumpPower = savedJump  end
+        if savedSpeed then humanoid.WalkSpeed = savedSpeed end
+        savedJump  = nil
+        savedSpeed = nil
+        bhopSpeed  = 0
+    end)
+end
+
+bhopGiveBtn.MouseButton1Click:Connect(function()
+    createBhopTool()
+    bhopGiveBtn.Text = "✓ Given"
+    bhopGiveBtn.BackgroundColor3 = Color3.fromRGB(30, 160, 80)
+    task.delay(2.5, function()
+        bhopGiveBtn.Text = "Give Tool"
+        bhopGiveBtn.BackgroundColor3 = Color3.fromRGB(0, 145, 255)
+    end)
+end)
+
+local puppetGiveBtn, puppetIcon = makeToolCard(
+    "Puppet",
+    "Equip → click a player to mirror their animation on you in sync. Unequip to stop.",
+    3
+)
+puppetIcon.Text = "🪆"
+
+local puppetTool    = nil
+local puppetTrack    = nil
+local puppetConn     = nil
+local puppetTarget   = nil
+local puppetCurrentId = nil
+local puppetTracks   = {}
+
+local function stopPuppet()
+    if puppetConn then puppetConn:Disconnect() puppetConn = nil end
+    if puppetTrack then puppetTrack:Stop(0.2) puppetTrack = nil end
+    for id, t in pairs(puppetTracks) do
+        if t and t.IsPlaying then t:Stop(0.2) end
+    end
+    puppetTracks  = {}
+    puppetTarget  = nil
+    puppetCurrentId = nil
+end
+
+local function destroyPuppetTool()
+    stopPuppet()
+    if puppetTool and puppetTool.Parent then puppetTool:Destroy() end
+    puppetTool = nil
+end
+
+local function getClosestPlayerFromMouse()
+    local target = mouse.Target
+    if target then
+        for _, plr in Players:GetPlayers() do
+            if plr ~= player and plr.Character and target:IsDescendantOf(plr.Character) then
+                return plr
+            end
+        end
+    end
+    local unit = mouse.UnitRay
+    local best, bestDist = nil, math.huge
+    for _, plr in Players:GetPlayers() do
+        if plr == player or not plr.Character then continue end
+        local targetHrp = plr.Character:FindFirstChild("HumanoidRootPart")
+        if not targetHrp then continue end
+        local toTarget = targetHrp.Position - unit.Origin
+        local along    = toTarget:Dot(unit.Direction)
+        if along < 0 then continue end
+        local closest  = unit.Origin + unit.Direction * along
+        local dist     = (targetHrp.Position - closest).Magnitude
+        if dist < bestDist and dist < 25 then
+            bestDist = dist
+            best = plr
+        end
+    end
+    return best
+end
+
+local function puppetTick()
+    if not puppetTarget then return end
+
+    local char = puppetTarget.Character
+    if not char or not char.Parent then
+        stopPuppet()
+        return
+    end
+
+    local tHum = char:FindFirstChildOfClass("Humanoid")
+    local tAnimator = char:FindFirstChildOfClass("Animator")
+        or (tHum and tHum:FindFirstChildOfClass("Animator"))
+    if not tHum then stopPuppet() return end
+
+    local myAnimator = humanoid:FindFirstChildOfClass("Animator")
+    if not myAnimator then return end
+
+    local playing = tHum:GetPlayingAnimationTracks()
+    local targetIds = {}
+    for _, t in playing do
+        local ok, id = pcall(function() return t.Animation.AnimationId end)
+        if ok and id and id ~= "" then
+            targetIds[id] = t
+        end
+    end
+
+    for id, myTrack in pairs(puppetTracks) do
+        if not targetIds[id] then
+            if myTrack.IsPlaying then myTrack:Stop(0.1) end
+            puppetTracks[id] = nil
+        end
+    end
+
+    for id, srcTrack in pairs(targetIds) do
+        if not puppetTracks[id] or not puppetTracks[id].IsPlaying then
+            local a = Instance.new("Animation")
+            a.AnimationId = id
+            local ok2, myTrack = pcall(function() return myAnimator:LoadAnimation(a) end)
+            if not ok2 or not myTrack then continue end
+            myTrack.Priority = Enum.AnimationPriority.Action4
+            myTrack.Looped   = srcTrack.Looped
+            myTrack:Play(0, srcTrack.WeightCurrent, srcTrack.Speed)
+            task.defer(function()
+                if myTrack and myTrack.IsPlaying then
+                    myTrack.TimePosition = srcTrack.TimePosition
+                end
+            end)
+            puppetTracks[id] = myTrack
+        else
+            local myTrack = puppetTracks[id]
+            if math.abs(myTrack.TimePosition - srcTrack.TimePosition) > 0.12 then
+                myTrack.TimePosition = srcTrack.TimePosition
+            end
+            if math.abs(myTrack.Speed - srcTrack.Speed) > 0.01 then
+                myTrack:AdjustSpeed(srcTrack.Speed)
+            end
+        end
+    end
+end
+
+local function mirrorPlayer(targetPlr)
+    stopPuppet()
+    puppetTarget   = targetPlr
+    puppetCurrentId = nil
+
+    puppetTick()
+
+    local elapsed = 0
+    puppetConn = RunService.Heartbeat:Connect(function(dt)
+        elapsed = elapsed + dt
+        if elapsed >= 0.05 then
+            elapsed = 0
+            puppetTick()
+        end
+    end)
+end
+
+local function createPuppetTool()
+    destroyPuppetTool()
+    local tool = Instance.new("Tool")
+    tool.Name           = "Puppet"
+    tool.RequiresHandle = false
+    tool.CanBeDropped   = false
+    tool.Parent         = player.Backpack
+    puppetTool          = tool
+
+    local puppetHighlight = nil
+
+    local function clearHighlight()
+        if puppetHighlight and puppetHighlight.Parent then
+            puppetHighlight:Destroy()
+        end
+        puppetHighlight = nil
+    end
+
+    local function applyHighlight(char)
+        clearHighlight()
+        local hl = Instance.new("SelectionBox")
+        hl.Adornee        = char
+        hl.Color3         = Color3.fromRGB(0, 170, 255)
+        hl.LineThickness  = 0.04
+        hl.SurfaceTransparency = 0.85
+        hl.SurfaceColor3  = Color3.fromRGB(0, 170, 255)
+        hl.Parent         = character
+        puppetHighlight   = hl
+    end
+
+    tool.Activated:Connect(function()
+        local found = getClosestPlayerFromMouse()
+        if found and found.Character then
+            applyHighlight(found.Character)
+            mirrorPlayer(found)
+        end
+    end)
+
+    tool.Unequipped:Connect(function()
+        clearHighlight()
+        stopPuppet()
+    end)
+end
+
+puppetGiveBtn.MouseButton1Click:Connect(function()
+    createPuppetTool()
+    puppetGiveBtn.Text = "✓ Given"
+    puppetGiveBtn.BackgroundColor3 = Color3.fromRGB(30, 160, 80)
+    task.delay(2.5, function()
+        puppetGiveBtn.Text = "Give Tool"
+        puppetGiveBtn.BackgroundColor3 = Color3.fromRGB(0, 145, 255)
+    end)
+end)
+
+
+local settPage = tabPages["Settings"]
+
+makeSectionLabel("CHARACTER", settPage, -2)
+
+local limpCard = Instance.new("Frame")
+limpCard.Size             = UDim2.new(1, 0, 0, 40)
+limpCard.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+limpCard.LayoutOrder      = -1
+limpCard.Active           = true
+limpCard.Parent           = settPage
+Instance.new("UICorner", limpCard).CornerRadius = UDim.new(0, 10)
+Instance.new("UIStroke", limpCard).Color = Color3.fromRGB(42, 42, 42)
+
+local limpLbl = Instance.new("TextLabel")
+limpLbl.Size               = UDim2.new(0.65, 0, 1, 0)
+limpLbl.Position           = UDim2.new(0, 12, 0, 0)
+limpLbl.BackgroundTransparency = 1
+limpLbl.Text               = "🩼  Limp"
+limpLbl.Font               = Enum.Font.GothamBold
+limpLbl.TextSize           = 13
+limpLbl.TextColor3         = Color3.new(1, 1, 1)
+limpLbl.TextXAlignment     = Enum.TextXAlignment.Left
+limpLbl.Parent             = limpCard
+
+local limpSubLbl = Instance.new("TextLabel")
+limpSubLbl.Size               = UDim2.new(0.65, 0, 0, 14)
+limpSubLbl.Position           = UDim2.new(0, 12, 1, -16)
+limpSubLbl.BackgroundTransparency = 1
+limpSubLbl.Text               = "Blends with movement"
+limpSubLbl.Font               = Enum.Font.Gotham
+limpSubLbl.TextSize           = 10
+limpSubLbl.TextColor3         = Color3.fromRGB(100, 100, 100)
+limpSubLbl.TextXAlignment     = Enum.TextXAlignment.Left
+limpSubLbl.Parent             = limpCard
+
+local limpToggle = Instance.new("TextButton")
+limpToggle.Size            = UDim2.new(0, 60, 0, 26)
+limpToggle.Position        = UDim2.new(1, -70, 0.5, -13)
+limpToggle.BackgroundColor3 = Color3.fromRGB(190, 50, 50)
+limpToggle.Text            = "OFF"
+limpToggle.TextColor3      = Color3.new(1, 1, 1)
+limpToggle.Font            = Enum.Font.GothamBold
+limpToggle.TextSize        = 13
+limpToggle.Parent          = limpCard
+Instance.new("UICorner", limpToggle).CornerRadius = UDim.new(1, 0)
+
+limpToggle.MouseButton1Click:Connect(function()
+    limpEnabled = not limpEnabled
+    if limpEnabled then
+        limpToggle.Text            = "ON"
+        limpToggle.BackgroundColor3 = Color3.fromRGB(30, 160, 80)
+        startLimp()
+    else
+        limpToggle.Text            = "OFF"
+        limpToggle.BackgroundColor3 = Color3.fromRGB(190, 50, 50)
+        stopLimp()
+    end
+end)
+
+makeSectionLabel("ANIMATION", settPage, 0)
+
+makeSlider(settPage, "Anim Weight", 0, 5, Settings.Weight, 1, function(v)
+    Settings.Weight = math.max(v, 0.001)
+    if currentEmote and currentEmote.IsPlaying then
+        currentEmote:AdjustWeight(Settings.Weight)
+    end
+end)
+
+makeSlider(settPage, "Hip Height", 0, 5, humanoid.HipHeight, 2, function(v)
+    humanoid.HipHeight = v
+end)
+
+makeSectionLabel("ANIMATION PRIORITY  (emotes only, not BHop)", settPage, 3)
+
+local PRIORITIES = {
+    { label = "Core",     enum = Enum.AnimationPriority.Core,     num = nil },
+    { label = "Idle",     enum = Enum.AnimationPriority.Idle,     num = nil },
+    { label = "Movement", enum = Enum.AnimationPriority.Movement, num = nil },
+    { label = "Action",   enum = Enum.AnimationPriority.Action,   num = 1   },
+    { label = "Action2",  enum = Enum.AnimationPriority.Action2,  num = 2   },
+    { label = "Action3",  enum = Enum.AnimationPriority.Action3,  num = 3   },
+    { label = "Action4",  enum = Enum.AnimationPriority.Action4,  num = 4   },
+}
+
+local numToEnum = {
+    [1] = Enum.AnimationPriority.Action,
+    [2] = Enum.AnimationPriority.Action2,
+    [3] = Enum.AnimationPriority.Action3,
+    [4] = Enum.AnimationPriority.Action4,
+}
+
+local priorityBtns = {}
+
+local function applyPriority(targetEnum, targetLabel)
+    Settings.Priority = targetEnum
+    for lbl, b in pairs(priorityBtns) do
+        if lbl == targetLabel then
+            b.BackgroundColor3 = Color3.fromRGB(0, 145, 255)
+            b.TextColor3       = Color3.new(1, 1, 1)
+        else
+            b.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+            b.TextColor3       = Color3.fromRGB(160, 160, 160)
+        end
+    end
+end
+
+for i, p in ipairs(PRIORITIES) do
+    local isDefault = p.label == "Action4"
+    local btn = makeButton(p.label,
+        isDefault and Color3.fromRGB(0, 145, 255) or Color3.fromRGB(35, 35, 35),
+        settPage, 3 + i)
+    if isDefault then
+        btn.TextColor3 = Color3.new(1, 1, 1)
+    else
+        btn.TextColor3 = Color3.fromRGB(160, 160, 160)
+    end
+    priorityBtns[p.label] = btn
+
+    btn.MouseButton1Click:Connect(function()
+        applyPriority(p.enum, p.label)
+    end)
+end
+
+local numInputCard = Instance.new("Frame")
+numInputCard.Size             = UDim2.new(1, 0, 0, 44)
+numInputCard.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+numInputCard.LayoutOrder      = 11
+numInputCard.Parent           = settPage
+Instance.new("UICorner", numInputCard).CornerRadius = UDim.new(0, 10)
+Instance.new("UIStroke", numInputCard).Color = Color3.fromRGB(42, 42, 42)
+
+local numHint = Instance.new("TextLabel")
+numHint.Size               = UDim2.new(0.5, -8, 1, 0)
+numHint.Position           = UDim2.new(0, 12, 0, 0)
+numHint.BackgroundTransparency = 1
+numHint.Text               = "Type 1-4 (Action level):"
+numHint.Font               = Enum.Font.Gotham
+numHint.TextSize           = 12
+numHint.TextColor3         = Color3.fromRGB(160, 160, 160)
+numHint.TextXAlignment     = Enum.TextXAlignment.Left
+numHint.Parent             = numInputCard
+
+local numBox = Instance.new("TextBox")
+numBox.Size            = UDim2.new(0.22, -4, 0, 28)
+numBox.Position        = UDim2.new(0.5, 0, 0.5, -14)
+numBox.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+numBox.Text            = "4"
+numBox.PlaceholderText = "1-4"
+numBox.TextColor3      = Color3.new(1, 1, 1)
+numBox.Font            = Enum.Font.GothamBold
+numBox.TextSize        = 14
+numBox.ClearTextOnFocus = false
+numBox.Parent          = numInputCard
+Instance.new("UICorner", numBox).CornerRadius = UDim.new(0, 7)
+
+local numApplyBtn = Instance.new("TextButton")
+numApplyBtn.Size            = UDim2.new(0.25, -8, 0, 28)
+numApplyBtn.Position        = UDim2.new(0.74, 0, 0.5, -14)
+numApplyBtn.BackgroundColor3 = Color3.fromRGB(0, 145, 255)
+numApplyBtn.Text            = "Apply"
+numApplyBtn.TextColor3      = Color3.new(1, 1, 1)
+numApplyBtn.Font            = Enum.Font.GothamBold
+numApplyBtn.TextSize        = 12
+numApplyBtn.Parent          = numInputCard
+Instance.new("UICorner", numApplyBtn).CornerRadius = UDim.new(0, 7)
+
+numApplyBtn.MouseButton1Click:Connect(function()
+    local n = tonumber(numBox.Text)
+    n = n and math.floor(n)
+    local e = n and numToEnum[n]
+    if e then
+        local lbl = "Action" .. (n == 1 and "" or tostring(n))
+        applyPriority(e, lbl)
+        numApplyBtn.Text            = "Applied!"
+        numApplyBtn.BackgroundColor3 = Color3.fromRGB(30, 160, 80)
+        task.delay(1.5, function()
+            numApplyBtn.Text            = "Apply"
+            numApplyBtn.BackgroundColor3 = Color3.fromRGB(0, 145, 255)
+        end)
+    else
+        numApplyBtn.Text            = "Bad val"
+        numApplyBtn.BackgroundColor3 = Color3.fromRGB(190, 50, 50)
+        task.delay(1.5, function()
+            numApplyBtn.Text            = "Apply"
+            numApplyBtn.BackgroundColor3 = Color3.fromRGB(0, 145, 255)
+        end)
+    end
+end)
+
+makeSectionLabel("WOBBLE  (emotes only)", settPage, 13)
+
+local wobbleToggleCard = Instance.new("Frame")
+wobbleToggleCard.Size             = UDim2.new(1, 0, 0, 40)
+wobbleToggleCard.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+wobbleToggleCard.LayoutOrder      = 14
+wobbleToggleCard.Parent           = settPage
+Instance.new("UICorner", wobbleToggleCard).CornerRadius = UDim.new(0, 10)
+Instance.new("UIStroke", wobbleToggleCard).Color = Color3.fromRGB(42, 42, 42)
+
+local wobbleLbl = Instance.new("TextLabel")
+wobbleLbl.Size               = UDim2.new(0.6, 0, 1, 0)
+wobbleLbl.Position           = UDim2.new(0, 12, 0, 0)
+wobbleLbl.BackgroundTransparency = 1
+wobbleLbl.Text               = "Wobble"
+wobbleLbl.Font               = Enum.Font.GothamBold
+wobbleLbl.TextSize           = 13
+wobbleLbl.TextColor3         = Color3.new(1, 1, 1)
+wobbleLbl.TextXAlignment     = Enum.TextXAlignment.Left
+wobbleLbl.Parent             = wobbleToggleCard
+
+local wobbleToggle = Instance.new("TextButton")
+wobbleToggle.Size            = UDim2.new(0, 60, 0, 26)
+wobbleToggle.Position        = UDim2.new(1, -70, 0.5, -13)
+wobbleToggle.BackgroundColor3 = Color3.fromRGB(190, 50, 50)
+wobbleToggle.Text            = "OFF"
+wobbleToggle.TextColor3      = Color3.new(1, 1, 1)
+wobbleToggle.Font            = Enum.Font.GothamBold
+wobbleToggle.TextSize        = 13
+wobbleToggle.Parent          = wobbleToggleCard
+Instance.new("UICorner", wobbleToggle).CornerRadius = UDim.new(1, 0)
+
+wobbleToggle.MouseButton1Click:Connect(function()
+    Settings.WobbleEnabled = not Settings.WobbleEnabled
+    if Settings.WobbleEnabled then
+        wobbleToggle.Text            = "ON"
+        wobbleToggle.BackgroundColor3 = Color3.fromRGB(30, 160, 80)
+    else
+        wobbleToggle.Text            = "OFF"
+        wobbleToggle.BackgroundColor3 = Color3.fromRGB(190, 50, 50)
+    end
+end)
+
+makeSlider(settPage, "Wobble Point", 0, 1, Settings.WobblePoint, 15, function(v)
+    Settings.WobblePoint = v
+end)
+
+makeSlider(settPage, "Wobble Duration", 0.1, 5, Settings.WobbleDuration, 16, function(v)
+    Settings.WobbleDuration = v
+end)
+
+makeSlider(settPage, "Wobble Speed", 1, 64, Settings.WobbleSpeed, 17, function(v)
+    Settings.WobbleSpeed = v
+end)
+
+local wobblePresetCard = Instance.new("Frame")
+wobblePresetCard.Size             = UDim2.new(1, 0, 0, 36)
+wobblePresetCard.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+wobblePresetCard.LayoutOrder      = 17
+wobblePresetCard.Active           = true
+wobblePresetCard.Parent           = settPage
+Instance.new("UICorner", wobblePresetCard).CornerRadius = UDim.new(0, 10)
+
+local wobPresetLayout = Instance.new("UIListLayout", wobblePresetCard)
+wobPresetLayout.FillDirection = Enum.FillDirection.Horizontal
+wobPresetLayout.Padding       = UDim.new(0, 4)
+wobPresetLayout.SortOrder     = Enum.SortOrder.LayoutOrder
+
+local wobPresetPad = Instance.new("UIPadding", wobblePresetCard)
+wobPresetPad.PaddingLeft   = UDim.new(0, 4)
+wobPresetPad.PaddingRight  = UDim.new(0, 4)
+wobPresetPad.PaddingTop    = UDim.new(0, 4)
+wobPresetPad.PaddingBottom = UDim.new(0, 4)
+
+local WOBBLE_PRESETS = { {"1x", 4}, {"4x", 16}, {"8x", 32}, {"16x", 64} }
+local wobPresetBtns = {}
+
+local function applyWobblePreset(speed, label)
+    Settings.WobbleSpeed = speed
+    for lbl, b in pairs(wobPresetBtns) do
+        b.BackgroundColor3 = lbl == label
+            and Color3.fromRGB(0, 145, 255)
+            or  Color3.fromRGB(45, 45, 45)
+        b.TextColor3 = lbl == label
+            and Color3.new(1, 1, 1)
+            or  Color3.fromRGB(160, 160, 160)
+    end
+end
+
+for i, preset in ipairs(WOBBLE_PRESETS) do
+    local lbl, spd = preset[1], preset[2]
+    local pb = Instance.new("TextButton")
+    pb.Size            = UDim2.new(0.25, -4, 1, 0)
+    pb.BackgroundColor3 = i == 2
+        and Color3.fromRGB(0, 145, 255)
+        or  Color3.fromRGB(45, 45, 45)
+    pb.Text            = lbl
+    pb.TextColor3      = i == 2
+        and Color3.new(1, 1, 1)
+        or  Color3.fromRGB(160, 160, 160)
+    pb.Font            = Enum.Font.GothamBold
+    pb.TextSize        = 13
+    pb.LayoutOrder     = i
+    pb.Parent          = wobblePresetCard
+    Instance.new("UICorner", pb).CornerRadius = UDim.new(0, 8)
+    wobPresetBtns[lbl] = pb
+    pb.MouseButton1Click:Connect(function()
+        applyWobblePreset(spd, lbl)
+    end)
+end
+
+
+makeSlider(settPage, "Wobble Range", 0.001, 0.3, Settings.WobbleRange, 18, function(v)
+    Settings.WobbleRange = v
+end)
+
+makeSectionLabel("HUMANOIDROOTPART", settPage, 19)
+
+local hrpMassCard = Instance.new("Frame")
+hrpMassCard.Size             = UDim2.new(1, 0, 0, 64)
+hrpMassCard.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+hrpMassCard.LayoutOrder      = 12
+hrpMassCard.Parent           = settPage
+Instance.new("UICorner", hrpMassCard).CornerRadius = UDim.new(0, 10)
+Instance.new("UIStroke", hrpMassCard).Color = Color3.fromRGB(42, 42, 42)
+
+local massLbl = Instance.new("TextLabel")
+massLbl.Size               = UDim2.new(1, -20, 0, 22)
+massLbl.Position           = UDim2.new(0, 12, 0, 7)
+massLbl.BackgroundTransparency = 1
+massLbl.Text               = "HRP Mass"
+massLbl.Font               = Enum.Font.GothamBold
+massLbl.TextSize           = 13
+massLbl.TextColor3         = Color3.new(1, 1, 1)
+massLbl.TextXAlignment     = Enum.TextXAlignment.Left
+massLbl.Parent             = hrpMassCard
+
+local massBox = Instance.new("TextBox")
+massBox.Size            = UDim2.new(0.55, -8, 0, 28)
+massBox.Position        = UDim2.new(0, 12, 0, 30)
+massBox.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+massBox.Text            = string.format("%.3f", hrp:GetMass())
+massBox.PlaceholderText = "Enter mass..."
+massBox.TextColor3      = Color3.new(1, 1, 1)
+massBox.Font            = Enum.Font.Gotham
+massBox.TextSize        = 13
+massBox.ClearTextOnFocus = false
+massBox.Parent          = hrpMassCard
+Instance.new("UICorner", massBox).CornerRadius = UDim.new(0, 7)
+
+local massSetBtn = Instance.new("TextButton")
+massSetBtn.Size            = UDim2.new(0.4, -8, 0, 28)
+massSetBtn.Position        = UDim2.new(0.6, 0, 0, 30)
+massSetBtn.BackgroundColor3 = Color3.fromRGB(0, 145, 255)
+massSetBtn.Text            = "Set Mass"
+massSetBtn.TextColor3      = Color3.new(1, 1, 1)
+massSetBtn.Font            = Enum.Font.GothamBold
+massSetBtn.TextSize        = 12
+massSetBtn.Parent          = hrpMassCard
+Instance.new("UICorner", massSetBtn).CornerRadius = UDim.new(0, 7)
+
+massSetBtn.MouseButton1Click:Connect(function()
+    local num = tonumber(massBox.Text)
+    if num and num > 0 then
+        local cur = hrp.CurrentPhysicalProperties
+        local vol = hrp.Size.X * hrp.Size.Y * hrp.Size.Z
+        local density = num / vol
+        hrp.CustomPhysicalProperties = PhysicalProperties.new(
+            density,
+            cur.Friction,
+            cur.Elasticity,
+            cur.FrictionWeight,
+            cur.ElasticityWeight
+        )
+        massSetBtn.Text            = "Applied!"
+        massSetBtn.BackgroundColor3 = Color3.fromRGB(30, 160, 80)
+        task.delay(2, function()
+            massSetBtn.Text            = "Set Mass"
+            massSetBtn.BackgroundColor3 = Color3.fromRGB(0, 145, 255)
+            massBox.Text = string.format("%.3f", hrp:GetMass())
+        end)
+    else
+        massSetBtn.Text            = "Invalid"
+        massSetBtn.BackgroundColor3 = Color3.fromRGB(190, 50, 50)
+        task.delay(1.5, function()
+            massSetBtn.Text            = "Set Mass"
+            massSetBtn.BackgroundColor3 = Color3.fromRGB(0, 145, 255)
+        end)
+    end
+end)
+
+local function preloadAll()
+    local ids = {}
+    local idMeta = {} -- parallel table for name + emote ref
+
+    for _, e in ipairs(EMOTES) do
+        table.insert(ids, { id = e.id, label = e.name, emote = e })
+    end
+    table.insert(ids, { id = TOOL_IDS.instantTransmission, label = "Instant Transmission" })
+    table.insert(ids, { id = TOOL_IDS.bhop,                label = "BHop" })
+    table.insert(ids, { id = LIMP_ANIM_ID,                 label = "Limp" })
+    table.insert(ids, { id = 109863797124787,              label = "IT Arrival" })
+
+    local total = #ids
+
+    for i, entry in ipairs(ids) do
+        loadStatus.Text = string.format("Loading %d / %d  —  %s", i, total, entry.label)
+        TweenService:Create(barFill, TweenInfo.new(0.18), {
+            Size = UDim2.new(i / total, 0, 1, 0)
+        }):Play()
+
+        local ok, animId = pcall(resolveAnimId, entry.id)
+        if ok and animId then
+            local ok2, track = pcall(function()
+                return humanoid:LoadAnimation(newAnim(animId))
+            end)
+            if ok2 and track then
+                track:Play(0, 1, 100)
+                task.wait(0.07)
+                local len = track.Length
+                animLengths[entry.id] = len
+                track:Stop(0)
+
+                if entry.emote and entry.emote._lenLabel then
+                    entry.emote._lenLabel.Text = string.format("%.1fs", len)
+                end
+            end
+        end
+
+        task.wait(0.03)
+    end
+
+    loadStatus.Text = "✓ All animations cached!"
+    task.wait(0.45)
+
+    TweenService:Create(loadFrame, TweenInfo.new(0.3), {
+        BackgroundTransparency = 1
+    }):Play()
+    for _, d in ipairs(loadFrame:GetDescendants()) do
+        if d:IsA("TextLabel") or d:IsA("TextButton") then
+            TweenService:Create(d, TweenInfo.new(0.3), {
+                BackgroundTransparency = 1,
+                TextTransparency       = 1,
+            }):Play()
+        elseif d:IsA("Frame") then
+            TweenService:Create(d, TweenInfo.new(0.3), {
+                BackgroundTransparency = 1,
+            }):Play()
+        end
+    end
+    task.wait(0.35)
+    loadFrame.Visible  = false
+    mainFrame.Visible  = true
+end
+
+task.spawn(preloadAll)
+
+local function disableHRPCollision(character)
+    local root = character:FindFirstChild("HumanoidRootPart")
+    if root then
+        root.CanCollide = false
+    end
+end
+
+local function watchCharacter(character)
+    disableHRPCollision(character)
+    character.ChildAdded:Connect(function(child)
+        if child.Name == "HumanoidRootPart" then
+            child.CanCollide = false
+        end
+    end)
+end
+
+local function watchPlayer(p)
+    if p.Character then
+        watchCharacter(p.Character)
+    end
+    p.CharacterAdded:Connect(watchCharacter)
+end
+
+for _, p in ipairs(Players:GetPlayers()) do
+    watchPlayer(p)
+end
+Players.PlayerAdded:Connect(watchPlayer)
+
+RunService.Stepped:Connect(function()
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p.Character then
+            local root = p.Character:FindFirstChild("HumanoidRootPart")
+            if root then
+                root.CanCollide = false
+            end
+        end
+    end
+end)
+
+local Workspace = Services.Workspace
+
+local CHAR_PART_PROPS = {
+    HumanoidRootPart = PhysicalProperties.new(100, 0.3, 0.5, 1, 1),
+    Torso            = PhysicalProperties.new(40,  0.1, 0, 1, 1),
+    Head             = PhysicalProperties.new(5,   0,   0, 1, 1),
+    ["Left Arm"]     = PhysicalProperties.new(2,   0,   0, 1, 1),
+    ["Right Arm"]    = PhysicalProperties.new(2,   0,   0, 1, 1),
+    ["Left Leg"]     = PhysicalProperties.new(8,   0.3, 0, 1, 1),
+    ["Right Leg"]    = PhysicalProperties.new(8,   0.3, 0, 1, 1),
+    UpperTorso       = PhysicalProperties.new(40,  0.1, 0, 1, 1),
+    LowerTorso       = PhysicalProperties.new(40,  0.1, 0, 1, 1),
+    LeftUpperArm     = PhysicalProperties.new(2,   0,   0, 1, 1),
+    LeftLowerArm     = PhysicalProperties.new(2,   0,   0, 1, 1),
+    LeftHand         = PhysicalProperties.new(1,   0,   0, 1, 1),
+    RightUpperArm    = PhysicalProperties.new(2,   0,   0, 1, 1),
+    RightLowerArm    = PhysicalProperties.new(2,   0,   0, 1, 1),
+    RightHand        = PhysicalProperties.new(1,   0,   0, 1, 1),
+    LeftUpperLeg     = PhysicalProperties.new(8,   0.3, 0, 1, 1),
+    LeftLowerLeg     = PhysicalProperties.new(8,   0.3, 0, 1, 1),
+    LeftFoot         = PhysicalProperties.new(3,   0.3, 0, 1, 1),
+    RightUpperLeg    = PhysicalProperties.new(8,   0.3, 0, 1, 1),
+    RightLowerLeg    = PhysicalProperties.new(8,   0.3, 0, 1, 1),
+    RightFoot        = PhysicalProperties.new(3,   0.3, 0, 1, 1),
+}
+local HIGH_FRICTION_LIGHT = PhysicalProperties.new(0.0001, 0, 0, 1, 1)
+local ZERO_BOUNCE         = PhysicalProperties.new(0.7,  0.3, 0, 1, 1)
+
+local NETLESS_FORCE    = 600
+local EXTRA_MULTIPLIER = 1.8
+local PUSH_COOLDOWN    = 0.25
+
+local fat_propertyConnections = {}
+local fat_playerPartCache     = {}
+local fat_partLastPushed      = {}
+local fat_anchoredOriginalProps = {}
+local fat_anchoredPatched     = {}
+local fat_anchorWatched       = {}
+local fat_pushConnection      = nil
+local fat_restorePush         = nil
+
+local function fat_getPlayersOnPart(part)
+    local touching = part:GetTouchingParts() or {}
+    local result = {}
+    for _, tp in touching do
+        for _, plr in Players:GetPlayers() do
+            if plr ~= player and plr.Character and tp:IsDescendantOf(plr.Character) then
+                table.insert(result, plr)
+                break
+            end
+        end
+    end
+    return result
+end
+
+local function fat_getPlayersInVehicle(part)
+    local model = part:FindFirstAncestorOfClass("Model")
+    if not model then return {} end
+    local result = {}
+    for _, desc in model:GetDescendants() do
+        if desc:IsA("Seat") or desc:IsA("VehicleSeat") then
+            local occupant = desc.Occupant
+            if occupant then
+                local plr = Players:GetPlayerFromCharacter(occupant.Parent)
+                if plr and plr ~= player then
+                    table.insert(result, plr)
+                end
+            end
+        end
+    end
+    return result
+end
+
+local function fat_applyProperties(part, props)
+    if not part:IsA("BasePart") then return end
+    if part.Anchored then
+        if not fat_anchorWatched[part] then
+            fat_anchorWatched[part] = true
+            part:GetPropertyChangedSignal("Anchored"):Connect(function()
+                if not part.Anchored and part:IsDescendantOf(game) then
+                    fat_applyProperties(part, props)
+                end
+            end)
+            part.AncestryChanged:Connect(function()
+                if not part:IsDescendantOf(game) then
+                    fat_anchorWatched[part] = nil
+                end
+            end)
+        end
+        return
+    end
+
+    if not part.CustomPhysicalProperties
+    or math.abs(part.CustomPhysicalProperties.Density - props.Density) > 0.001 then
+        part.CustomPhysicalProperties = props
+    end
+
+    if fat_propertyConnections[part] then return end
+
+    local conn = part:GetPropertyChangedSignal("CustomPhysicalProperties"):Connect(function()
+        if part.Anchored then return end
+        if not part.CustomPhysicalProperties
+        or math.abs(part.CustomPhysicalProperties.Density - props.Density) > 0.001 then
+            part.CustomPhysicalProperties = props
+        end
+    end)
+    fat_propertyConnections[part] = conn
+
+    part.AncestryChanged:Connect(function()
+        if not part:IsDescendantOf(game) then
+            if fat_propertyConnections[part] then
+                fat_propertyConnections[part]:Disconnect()
+                fat_propertyConnections[part] = nil
+            end
+            fat_playerPartCache[part]      = nil
+            fat_partLastPushed[part]       = nil
+            fat_anchorWatched[part]        = nil
+        end
+    end)
+end
+
+local function fat_makeCharacterHeavy(char)
+    if not char then return end
+    task.wait(0.3)
+
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum.AutoJumpEnabled = false
+        hum.BreakJointsOnDeath = false
+        hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll,     false)
+        hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+        hum:SetStateEnabled(Enum.HumanoidStateType.Physics,     false)
+    end
+
+    for _, obj in char:GetDescendants() do
+        if obj.Name == "HumanoidRootPart" then
+            fat_applyProperties(obj, CHAR_PART_PROPS.HumanoidRootPart)
+            fat_playerPartCache[obj] = true
+        end
+    end
+
+    char.DescendantAdded:Connect(function(obj)
+        if obj.Name == "HumanoidRootPart" then
+            fat_applyProperties(obj, CHAR_PART_PROPS.HumanoidRootPart)
+            fat_playerPartCache[obj] = true
+        end
+    end)
+
+    local root = char:WaitForChild("HumanoidRootPart", 5)
+    if not root then return end
+
+    if fat_pushConnection then
+        fat_pushConnection:Disconnect()
+        fat_pushConnection = nil
+    end
+
+    local rayParams = RaycastParams.new()
+    rayParams.FilterDescendantsInstances = {char}
+    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+    fat_pushConnection = RunService.PreSimulation:Connect(function()
+        if not root or not root.Parent then return end
+
+        local currentlyTouching = {}
+        for _, cp in char:GetDescendants() do
+            if not cp:IsA("BasePart") then continue end
+            local touching = cp:GetTouchingParts()
+            if typeof(touching) ~= "table" then continue end
+            for _, p in touching do
+                if not p:IsA("BasePart") then continue end
+                if not p.Anchored then continue end
+                if p:IsDescendantOf(char) then continue end
+                currentlyTouching[p] = true
+                if not fat_anchoredPatched[p] then
+                    fat_anchoredPatched[p]        = true
+                    fat_anchoredOriginalProps[p]   = p.CustomPhysicalProperties
+                    p.CustomPhysicalProperties     = ZERO_BOUNCE
+                end
+            end
+        end
+
+        for p in pairs(fat_anchoredPatched) do
+            if not currentlyTouching[p] then
+                if p and p.Parent then
+                    p.CustomPhysicalProperties = fat_anchoredOriginalProps[p]
+                end
+                fat_anchoredPatched[p]      = nil
+                fat_anchoredOriginalProps[p] = nil
+            end
+        end
+
+        local floorRay = Workspace:Raycast(root.Position, Vector3.new(0, -3.5, 0), rayParams)
+        if floorRay and floorRay.Instance and floorRay.Instance.Anchored then return end
+
+        if not hum or hum.MoveDirection.Magnitude < 0.1 then return end
+
+        local pushDir    = hum.MoveDirection
+        local directTouch = root:GetTouchingParts()
+        if typeof(directTouch) ~= "table" or #directTouch == 0 then return end
+
+        local toPush = {}
+        local visited = {}
+
+        local function collectConnected(current)
+            if not current or not current:IsA("BasePart") then return end
+            if current.Anchored then return end
+            if current:IsDescendantOf(char) then return end
+            if visited[current] then return end
+            visited[current]  = true
+            toPush[current]   = true
+            local touching = current:GetTouchingParts()
+            if typeof(touching) == "table" then
+                for _, other in touching do collectConnected(other) end
+            end
+        end
+
+        for _, part in directTouch do
+            if part:IsA("BasePart") and not part.Anchored and not part:IsDescendantOf(char) then
+                collectConnected(part)
+            end
+        end
+
+        if next(toPush) == nil then return end
+
+        local now = tick()
+        for part in toPush do
+            if not part or not part.Parent then continue end
+            if part.Anchored then continue end
+            if part:GetRootPart() == root then continue end
+            if (root.Position.Y - part.Position.Y) > 1.5 then continue end
+
+            local last = fat_partLastPushed[part]
+            if last and (now - last) < PUSH_COOLDOWN then continue end
+
+            local blockedByAnchor = false
+            local neighbors = part:GetTouchingParts()
+            if typeof(neighbors) == "table" then
+                for _, n in neighbors do
+                    if n.Anchored then
+                        local toN = Vector3.new(
+                            n.Position.X - part.Position.X, 0,
+                            n.Position.Z - part.Position.Z)
+                        if toN.Magnitude > 0.01 and toN.Unit:Dot(pushDir) > 0.5 then
+                            blockedByAnchor = true
+                            break
+                        end
+                    end
+                end
+            end
+            if blockedByAnchor then continue end
+
+            fat_partLastPushed[part] = now
+
+            local onPart  = fat_getPlayersOnPart(part)
+            local inVeh   = fat_getPlayersInVehicle(part)
+            local blocked = #onPart > 0 or #inVeh > 0
+            local force   = blocked and (NETLESS_FORCE * EXTRA_MULTIPLIER) or NETLESS_FORCE
+            local target  = pushDir * force
+
+            local cv   = part.AssemblyLinearVelocity
+            local safeY = math.clamp(cv.Y, -50, 2)
+            part.AssemblyLinearVelocity = Vector3.new(
+                cv.X + (target.X - cv.X) * 0.4,
+                safeY,
+                cv.Z + (target.Z - cv.Z) * 0.4
+            )
+
+            for _, plr in onPart do
+                if plr == player or not plr.Character then continue end
+                local pr = plr.Character:FindFirstChild("HumanoidRootPart")
+                if pr and pr.Parent then
+                    local rv = pr.AssemblyLinearVelocity
+                    pr.AssemblyLinearVelocity = Vector3.new(
+                        rv.X + (target.X - rv.X) * 0.4,
+                        math.clamp(rv.Y, -50, 2),
+                        rv.Z + (target.Z - rv.Z) * 0.4
+                    )
+                end
+            end
+
+            for _, plr in inVeh do
+                if plr == player or not plr.Character then continue end
+                local pr = plr.Character:FindFirstChild("HumanoidRootPart")
+                if pr and pr.Parent then
+                    local rv = pr.AssemblyLinearVelocity
+                    pr.AssemblyLinearVelocity = Vector3.new(
+                        rv.X + (target.X - rv.X) * 0.4,
+                        math.clamp(rv.Y, -50, 2),
+                        rv.Z + (target.Z - rv.Z) * 0.4
+                    )
+                end
+            end
+        end
+    end)
+end
+fat_restorePush = fat_makeCharacterHeavy
+
+local function fat_applyLightToPart(part)
+    if not part:IsA("BasePart") then return end
+    if part.Anchored then return end
+    if player.Character and part:IsDescendantOf(player.Character) then return end
+    fat_applyProperties(part, HIGH_FRICTION_LIGHT)
+end
+
+local function fat_scanWorkspace()
+    for _, obj in Workspace:GetDescendants() do
+        if not obj:IsA("BasePart") then continue end
+        if player.Character and obj:IsDescendantOf(player.Character) then continue end
+        if obj.Anchored then
+            if not obj.CustomPhysicalProperties
+            or math.abs(obj.CustomPhysicalProperties.Elasticity - 0) > 0.001 then
+                obj.CustomPhysicalProperties = ZERO_BOUNCE
+            end
+        else
+            fat_applyLightToPart(obj)
+        end
+    end
+end
+
+player.CharacterAdded:Connect(function(char)
+    if fat_pushConnection then
+        fat_pushConnection:Disconnect()
+        fat_pushConnection = nil
+    end
+    for p in pairs(fat_playerPartCache) do
+        if not p:IsDescendantOf(game) then fat_playerPartCache[p] = nil end
+    end
+    for p in pairs(fat_propertyConnections) do
+        if not p:IsDescendantOf(game) and fat_propertyConnections[p] then
+            fat_propertyConnections[p]:Disconnect()
+            fat_propertyConnections[p] = nil
+        end
+    end
+    for p in pairs(fat_partLastPushed) do
+        if not p:IsDescendantOf(game) then fat_partLastPushed[p] = nil end
+    end
+    task.spawn(fat_makeCharacterHeavy, char)
+end)
+
+if player.Character then
+    task.spawn(fat_makeCharacterHeavy, player.Character)
+end
+
+Workspace.DescendantAdded:Connect(function(desc)
+    if not desc:IsA("BasePart") then return end
+    if player.Character and desc:IsDescendantOf(player.Character) then return end
+    if desc.Anchored then
+        desc.CustomPhysicalProperties = ZERO_BOUNCE
+    else
+        fat_applyLightToPart(desc)
+        desc.AssemblyLinearVelocity  = Vector3.zero
+        desc.AssemblyAngularVelocity = Vector3.zero
+    end
+end)
+
+Players.PlayerAdded:Connect(function(plr)
+    if plr == player then return end
+    plr.CharacterAdded:Connect(function(char)
+        task.wait(0.15)
+        for _, obj in char:GetDescendants() do
+            fat_applyLightToPart(obj)
+            fat_playerPartCache[obj] = true
+        end
+        char.DescendantAdded:Connect(function(o)
+            fat_applyLightToPart(o)
+            fat_playerPartCache[o] = true
+        end)
+    end)
+end)
+
+local fat_lastScan = 0
+RunService.Heartbeat:Connect(function()
+    if tick() - fat_lastScan > 5 then
+        fat_lastScan = tick()
+        task.spawn(fat_scanWorkspace)
+    end
+end)
+
+task.delay(1.2, fat_scanWorkspace)
+
+pcall(setsimulationradius, math.huge, math.huge)
